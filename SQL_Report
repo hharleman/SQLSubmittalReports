@@ -1,0 +1,92 @@
+--import all data and view
+SELECT * FROM Rev_Stat_All$
+SELECT * FROM submittal_logs$
+
+--remove all rows that were not submitted to the client and not relevant to this project
+DELETE FROM Rev_Stat_All$
+WHERE
+NOT (Doc_id LIKE '%L8PM%'
+	AND Title LIKE '%STA-%'
+	OR Title LIKE '%MSF-%'
+	OR Title LIKE '%GDWY-%'
+	OR Title LIKE '%GBK-%')
+
+
+--clean up the revs so only the numbers appear
+UPDATE Rev_Stat_All$ SET Revision = REPLACE(Revision, '_PRELIM','') WHERE Revision LIKE '%_PRELIM%'
+UPDATE Rev_Stat_All$ SET Revision = REPLACE(Revision, '_FINAL','') WHERE Revision LIKE '%_FINAL%'
+UPDATE Rev_Stat_All$ SET Revision = REPLACE(Revision, 'A','') WHERE Revision LIKE '%A%'
+UPDATE Rev_Stat_All$ SET Revision = REPLACE(Revision, 'B','') WHERE Revision LIKE '%B%'
+UPDATE Rev_Stat_All$ SET Revision = REPLACE(Revision, 'C','') WHERE Revision LIKE '%C%'
+UPDATE Rev_Stat_All$ SET Revision = REPLACE(Revision, '_','') WHERE Revision LIKE '%_%'
+
+
+--create new columns in table
+ALTER TABLE Rev_Stat_All$
+ADD Procore_id varchar(255)
+ADD CWX_title varchar(255);
+
+
+--split title string so the procore number and title are in separate columns
+SELECT title, LEFT(title, CHARINDEX(' - ', title) -1) AS Procore_id,
+RIGHT(title, LEN(title) - CHARINDEX(' - ', title)-1) AS CWX_Title
+FROM Rev_Stat_All$;
+
+
+--update table by inserting the values of Procore number and title in separate columns
+UPDATE Rev_Stat_All$ SET Procore_id = LEFT(title, CHARINDEX(' - ', title) -1)
+UPDATE Rev_Stat_All$ SET CWX_title = RIGHT(title, LEN(title) - CHARINDEX(' - ', title)-1)
+
+
+--these are the columns needed from the submittal_logs table
+SELECT Procore_No, Description, Rev#, statusp
+FROM submittal_logs$;
+
+
+--change the rev# column from float to nvarchar to match the revision column we are going to join
+ALTER TABLE submittal_logs$
+ALTER COLUMN rev# nvarchar(255);
+
+
+--join the both tables together and insert into a newly created Report table.
+SELECT 
+	submittal_logs$.Procore_No, 
+	submittal_logs$.rev#, 
+	submittal_logs$.titlep, 
+	submittal_logs$.statusp, 
+	Rev_Stat_All$.doc_id, 
+	Rev_Stat_All$.Prolog_No_REV
+INTO Report
+FROM submittal_logs$ 
+JOIN Rev_Stat_All$ 
+ON submittal_logs$.procore_no = Rev_Stat_All$.procore_id
+AND submittal_logs$.rev# = Rev_Stat_All$.Revision
+
+SELECT * FROM Report
+
+--Look only at outstanding submittals (most recent revs)
+
+CREATE VIEW outstanding_resubmit
+AS
+SELECT Procore_No, Titlep, Rev#, Responsible_contractor, Received_from, Distributed_date
+FROM submittal_logs$ A
+INNER JOIN
+(SELECT Procore_No, max(rev#) as max_rev
+FROM submittal_logs$
+GROUP BY procore_no) B ON
+A.procore_no = B.procore_no AND
+A.rev# = B.max_rev
+
+SELECT max(Distributed_Date) FROM submittal_logs$
+Where Statusp = 'Revise & Resubmit'
+ORDER BY procore_no
+
+SELECT Procore_No, Titlep, Rev#, Responsible_contractor, Received_from, Distributed_date
+FROM submittal_logs$
+ORDER BY procore_no
+INNER JOIN
+
+
+
+
+--https://stackoverflow.com/questions/47022685/show-only-the-max-value-of-each-group?msclkid=0e51454cc43211eca3fe7f1586548240
